@@ -1,0 +1,48 @@
+{
+  "name": "ddgs_lmstudio_mcp",
+  "version": "0.1.0",
+  "description": "为 LM Studio 和 Claude Code 提供 JavaScript DuckDuckGo 搜索网关与 MCP 服务",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "bin": {
+    "ddgs-lmstudio-mcp": "bin/ddgs-lmstudio-mcp.mjs"
+  },
+  "scripts": {
+    "start": "node src/main.mjs",
+    "start:gateway": "node src/gateway-main.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:native": "node --test tests/native-flow.mjs",
+    "test:lifecycle": "node --test tests/lifecycle.mjs",
+    "install:gateway": "node scripts/install-gateway.mjs",
+    "check": "prettier --check . && npm test",
+    "install:lm-studio": "node scripts/install-lm-studio.mjs",
+    "start:companion": "node src/companion.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "cheerio": "^1.2.0",
+    "undici": "^7.30.2",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "prettier": "3.9.10"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "scripts/",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hjd-hitsz/ddgs_lmstudio_mcp.git"
+  },
+  "homepage": "https://github.com/hjd-hitsz/ddgs_lmstudio_mcp#readme",
+  "bugs": {
+    "url": "https://github.com/hjd-hitsz/ddgs_lmstudio_mcp/issues"
+  }
+}
