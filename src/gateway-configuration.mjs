@@ -19,14 +19,10 @@ export async function readGatewayConfiguration() {
     config.upstreamUrl = `http://127.0.0.1:${api.port}`;
   }
   if (
-    !config.apiKey ||
-    typeof config.upstreamKey !== "string" ||
     !URL.canParse(config.upstreamUrl) ||
     !["http:", "https:"].includes(new URL(config.upstreamUrl).protocol)
   )
-    throw new Error("搜索网关凭据或上游地址无效。");
-  if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65535)
-    throw new Error("网关端口须为 1～65535 的整数。");
+    throw new Error("LM Studio API 地址无效。");
   return {
     ...config,
     search: readConfiguration(),

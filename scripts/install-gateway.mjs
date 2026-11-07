@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { randomUUID } from "node:crypto";
 import {
   readConfiguration,
   configurationDirectory,
@@ -36,21 +35,8 @@ if (
 const search = args.length
   ? readConfiguration({ proxyPort: Number(args[1]) })
   : readConfiguration();
-async function readPrevious(path) {
-  try {
-    return JSON.parse(await readFile(path, "utf8"));
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-    return {};
-  }
-}
-const legacy = await readPrevious(settingsPath);
-const previous = await readPrevious(runtimePath);
 const config = {
-  apiKey: previous.apiKey || legacy.apiKey || randomUUID(),
   upstreamUrl: `http://127.0.0.1:${api.port || 1234}`,
-  upstreamKey: previous.upstreamKey ?? legacy.upstreamKey ?? "",
-  port: previous.port || legacy.port || 1235,
   lmStudioStateFile: join(lmHome, ".internal", "http-server.json"),
   lmStudioExecutable: installation.path,
   lmStudioApiFile: join(lmHome, ".internal", "http-server-config.json"),
@@ -93,7 +79,6 @@ await execute("systemctl", [
   "ddgs-search-gateway.path",
 ]);
 await execute("systemctl", ["--user", "restart", service]);
-await import("./install-lm-studio.mjs");
 console.log(
-  `已安装 LM Studio 搜索服务：http://127.0.0.1:${config.port}；${search.proxyPort ? "代理端口 " + search.proxyPort : "直连"}。`,
+  `已安装 LM Studio 搜索挂接服务，原端口 ${api.port}；${search.proxyPort ? "代理端口 " + search.proxyPort : "直连"}。`,
 );

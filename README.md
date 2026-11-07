@@ -1,54 +1,39 @@
 # ddgs_lmstudio_mcp
 
-为 LM Studio 提供 DuckDuckGo 网页和新闻搜索。搜索由 JavaScript 实现，随 npm 包交付，运行只需 Node.js。
+为 LM Studio 增加 DuckDuckGo 网页和新闻搜索，内置 JavaScript 搜索实现，通过 npm 安装。
 
-项目包含两种入口：LM Studio 可直接使用的 stdio MCP，以及兼容 Claude Code 原生 `WebSearch` 的 Anthropic Messages 网关。
+Claude Code 继续使用原来的 LM Studio 地址和凭据。搜索服务动态挂接 LM Studio 已有的 HTTP 服务，识别原生 `WebSearch` 辅助请求并返回搜索结果；普通模型请求继续交给 LM Studio。
 
 ```text
-Claude Code → 搜索网关 → LM Studio（模型请求）
-                     → DuckDuckGo（原生 WebSearch 请求）
-LM Studio → MCP → DuckDuckGo
+Claude Code → LM Studio 原端口（例如 1234）
+                 ├─ 模型请求 → LM Studio
+                 └─ WebSearch → DuckDuckGo 搜索服务
 ```
 
 ## 安装
 
-需要 Node.js 22.12 或更新版本。自动启动联动适用于具有用户级 systemd 的 Linux 桌面，并读取当前用户的 LM Studio 安装信息。首次安装前启动一次 LM Studio 并开启其本地 API 服务。
-
-直接从 GitHub 安装：
+需要 Node.js 22.12 或更新版本、Linux 用户级 systemd，以及当前用户运行的 LM Studio 桌面应用。已验证 LM Studio 0.4.24。首次安装前启动一次 LM Studio 并开启本地 API 服务。
 
 ```sh
 npm install -g github:hjd-hitsz/ddgs_lmstudio_mcp
 ddgs-lmstudio-mcp install
 ```
 
-在源码目录安装：
+源码安装可使用 `npm install -g .`，也可安装 `npm pack` 生成的包。
 
-```sh
-npm install -g .
-ddgs-lmstudio-mcp install
-```
+安装器只保存本项目配置并创建本项目的用户服务。程序自动读取 LM Studio 的安装位置、进程和 API 端口，保持 LM Studio、Claude Code 及其他调用方的配置原样。安装和运行均使用普通用户权限。
 
-也可安装由 `npm pack` 生成的 npm 包：
-
-```sh
-npm install -g ./ddgs_lmstudio_mcp-0.1.0.tgz
-ddgs-lmstudio-mcp install
-```
-
-安装命令自动注册 LM Studio MCP，并建立搜索网关的启动联动。LM Studio 启动后网关跟随启动，LM Studio 退出后网关停止。项目内的 `src/companion.mjs` 是网关启动入口。
+LM Studio 启动后搜索服务自动挂接；退出后服务停止。搜索服务停止或异常退出时，挂接自动解除，原端口继续提供 LM Studio 的原有服务。
 
 ## 代理
 
-唯一配置项为 `proxyPort`，默认 `7897`，对应 `http://127.0.0.1:7897`。
+唯一配置项为 `proxyPort`，默认 `7897`，对应 `http://127.0.0.1:7897`。设为 `0` 时直接连接 DuckDuckGo，忽略系统代理环境变量。
 
 ```sh
-# 默认启用本机 7897 端口的 HTTP 代理
-ddgs-lmstudio-mcp install
-
 # 修改代理端口
 ddgs-lmstudio-mcp install --proxy-port 7890
 
-# 关闭代理，直接连接 DuckDuckGo
+# 关闭代理
 ddgs-lmstudio-mcp install --proxy-port 0
 ```
 
@@ -60,17 +45,7 @@ ddgs-lmstudio-mcp install --proxy-port 0
 }
 ```
 
-设置为 `0` 时搜索直接连接，忽略系统代理环境变量。重复执行安装命令会保留已保存的端口；显式传入 `--proxy-port` 时更新端口。
-
-模型只提交搜索词等工具参数，网络连接由服务统一管理。
-
-## Claude Code 原生搜索
-
-将调用方的 Anthropic 服务地址指向 `http://127.0.0.1:1235`，API Key 使用本机自动生成的 `runtime.json` 中的 `apiKey`。网关通过 LM Studio 状态自动发现其本地 API 地址。
-
-Claude Code 的原生 `WebSearch` 辅助请求由网关执行搜索并返回来源，普通模型请求转发到 LM Studio。模型继续使用原来的 `WebSearch` 工具。
-
-`runtime.json` 保存自动生成的凭据、发现的程序路径和运行状态，权限为 `0600`，由安装器维护。源码和启动入口均包含在项目及 npm 包内。
+重复执行安装命令会保留已保存的端口；显式传入 `--proxy-port` 时更新端口。
 
 ## 运行和维护
 
@@ -79,18 +54,24 @@ ddgs-lmstudio-mcp status
 journalctl --user -u ddgs-search-gateway.service
 ```
 
-`ddgs-lmstudio-mcp mcp` 启动 stdio MCP，提供 `web_search` 和 `news_search`。`ddgs-lmstudio-mcp start` 在前台跟随当前 LM Studio 运行网关。
+`ddgs-lmstudio-mcp start` 在前台跟随当前 LM Studio 运行。移动源码或更换 npm 安装位置后重新执行安装命令，更新本项目的启动路径。
 
-移动源码或更换 npm 安装位置后重新执行安装命令，更新启动路径。
-
-停止自动联动：
+停止自动挂接：
 
 ```sh
 systemctl --user disable --now ddgs-search-gateway.path
 systemctl --user stop ddgs-search-gateway.service
 ```
 
-DuckDuckGo 返回验证码、HTTP 错误或异常页面时，搜索明确报错；代理恢复后可继续搜索。
+项目同时提供独立 stdio MCP：`ddgs-lmstudio-mcp mcp`，包含 `web_search` 和 `news_search`。客户端可自行连接；安装器保持客户端的 MCP 配置原样。
+
+## 挂接机制
+
+服务使用 Electron/Node.js 的动态调试接口，在 LM Studio 现有 HTTP 服务中安装内存请求处理器。只在挂接期间打开由本服务启动的调试入口，完成后立即关闭；已由用户开启的调试入口保持原样。私有 Unix socket 维持挂接生命周期，搜索服务断开即恢复原处理器。
+
+原认证凭据继续交给 LM Studio 校验。搜索服务内部使用临时随机令牌，绑定回环地址；内部端口由系统分配。
+
+此能力依赖 LM Studio 桌面应用保留动态调试接入能力。如果应用版本关闭该能力，或调试端口被其他进程占用，服务会记录挂接失败，保留原应用运行。DuckDuckGo 返回验证码、HTTP 错误或异常页面时，搜索明确报错，网络恢复后可重试。
 
 ## 开发验证
 
@@ -103,17 +84,7 @@ NATIVE_SEARCH_LIVE=1 npm run test:native
 npm pack
 ```
 
-基础测试覆盖搜索解析、代理与直连、取消与失败恢复，以及网关的 JSON/SSE 协议。原生调用测试运行本机 Claude Code CLI，通过模拟模型响应触发真实 WebSearch 调用；启用 `NATIVE_SEARCH_LIVE` 后使用真实 DuckDuckGo 网络搜索。生命周期测试创建临时用户 systemd 服务和模拟应用进程，检查启动、退出与再次启动。
-
-## 模块
-
-- `src/search.mjs`：JavaScript DuckDuckGo 搜索、代理、超时与取消。
-- `src/companion.mjs`：LM Studio 进程身份与网关生命周期。
-- `src/gateway.mjs`：认证、请求路由和上游转发。
-- `src/native-search.mjs`：原生搜索请求解析和域名约束。
-- `src/server.mjs`：MCP 工具定义。
-- `bin/ddgs-lmstudio-mcp.mjs`：npm 命令入口。
-- `scripts/install-gateway.mjs`：安装和用户 systemd 联动。
+基础测试覆盖原端口请求挂接、原凭据认证、JSON/SSE、断开恢复、搜索解析、代理与直连，以及取消和失败恢复。原生调用测试运行本机 Claude Code CLI，通过模拟模型响应触发原生 WebSearch；启用 `NATIVE_SEARCH_LIVE` 后使用真实 DuckDuckGo 搜索。生命周期测试通过真实用户 systemd 和隔离应用进程验证启动、挂接、退出及再次启动。
 
 ## 许可证
 

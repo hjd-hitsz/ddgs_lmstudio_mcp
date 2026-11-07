@@ -12,13 +12,12 @@
   },
   "scripts": {
     "start": "node src/main.mjs",
-    "start:gateway": "node src/gateway-main.mjs",
+    "start:gateway": "node src/companion.mjs",
     "test": "node --test tests/*.test.mjs",
     "test:native": "node --test tests/native-flow.mjs",
     "test:lifecycle": "node --test tests/lifecycle.mjs",
     "install:gateway": "node scripts/install-gateway.mjs",
     "check": "prettier --check . && npm test",
-    "install:lm-studio": "node scripts/install-lm-studio.mjs",
     "start:companion": "node src/companion.mjs"
   },
   "dependencies": {

@@ -10,31 +10,38 @@ import {
 } from "./native-search.mjs";
 import { writeMessage } from "./message-response.mjs";
 
+async function forwardResponse(reply, response) {
+  const headers = Object.fromEntries(
+    [...reply.headers].filter(
+      ([key]) =>
+        ![
+          "content-length",
+          "content-encoding",
+          "transfer-encoding",
+          "connection",
+        ].includes(key),
+    ),
+  );
+  response.writeHead(reply.status, headers);
+  if (reply.body) await pipeline(Readable.fromWeb(reply.body), response);
+  else response.end();
+}
+
 export function createGateway(configuration) {
   const search = createSearch(configuration.search);
-  const server = http.createServer(async (request, response) => {
-    if (request.method === "GET" && request.url === "/healthz") {
-      response
-        .writeHead(200, { "Content-Type": "application/json" })
-        .end(JSON.stringify({ ready: true, service: "ddgs-search-gateway" }));
-      return;
-    }
-    const supplied = Buffer.from(
-      request.headers["x-api-key"] ||
-        request.headers.authorization?.replace(/^Bearer /, "") ||
-        "",
-    );
-    const expected = Buffer.from(configuration.apiKey);
+  return http.createServer(async (request, response) => {
+    const supplied = Buffer.from(request.headers["x-ddgs-relay"] || "");
+    const expected = Buffer.from(configuration.relayToken);
     if (
       supplied.length !== expected.length ||
       !timingSafeEqual(supplied, expected)
     ) {
-      response.writeHead(401, { "Content-Type": "application/json" }).end(
+      response.writeHead(401, { "content-type": "application/json" }).end(
         JSON.stringify({
           type: "error",
           error: {
             type: "authentication_error",
-            message: "搜索网关认证失败。",
+            message: "搜索接入服务认证失败。",
           },
         }),
       );
@@ -46,8 +53,6 @@ export function createGateway(configuration) {
     });
     let stage = "request";
     try {
-      if (!request.url.startsWith("/v1/"))
-        throw new Error("接口路径须位于 /v1/。");
       const chunks = [];
       let size = 0;
       for await (const chunk of request) {
@@ -61,8 +66,30 @@ export function createGateway(configuration) {
         request.url.split("?")[0] === "/v1/messages"
           ? JSON.parse(bytes.toString())
           : null;
+      const headers = {
+        ...request.headers,
+        "x-ddgs-bypass": configuration.relayToken,
+      };
+      for (const name of [
+        "host",
+        "content-length",
+        "connection",
+        "accept-encoding",
+        "x-ddgs-relay",
+      ])
+        delete headers[name];
       const native = body && nativeSearchRequest(body);
       if (native) {
+        stage = "upstream";
+        const authentication = await fetch(
+          configuration.upstreamUrl + "/v1/models",
+          { headers, signal: abort.signal },
+        );
+        if (!authentication.ok) {
+          await forwardResponse(authentication, response);
+          return;
+        }
+        await authentication.body?.cancel();
         stage = "search";
         const result = await executeNativeSearch(native, search, abort.signal);
         writeMessage(response, body, searchResultText(result));
@@ -75,18 +102,6 @@ export function createGateway(configuration) {
         return;
       }
       stage = "upstream";
-      const headers = {
-        ...request.headers,
-        "x-api-key": configuration.upstreamKey,
-        authorization: `Bearer ${configuration.upstreamKey}`,
-      };
-      for (const name of [
-        "host",
-        "content-length",
-        "connection",
-        "accept-encoding",
-      ])
-        delete headers[name];
       const reply = await fetch(
         configuration.upstreamUrl.replace(/\/$/, "") + request.url,
         {
@@ -96,20 +111,7 @@ export function createGateway(configuration) {
           signal: abort.signal,
         },
       );
-      const outputHeaders = Object.fromEntries(
-        [...reply.headers].filter(
-          ([key]) =>
-            ![
-              "content-length",
-              "content-encoding",
-              "transfer-encoding",
-              "connection",
-            ].includes(key),
-        ),
-      );
-      response.writeHead(reply.status, outputHeaders);
-      if (reply.body) await pipeline(Readable.fromWeb(reply.body), response);
-      else response.end();
+      await forwardResponse(reply, response);
     } catch (error) {
       if (response.destroyed) return;
       if (response.headersSent) {
@@ -130,7 +132,7 @@ export function createGateway(configuration) {
       );
       response
         .writeHead(stage === "request" ? 400 : 502, {
-          "Content-Type": "application/json",
+          "content-type": "application/json",
         })
         .end(
           JSON.stringify({
@@ -143,5 +145,4 @@ export function createGateway(configuration) {
         );
     }
   });
-  return server;
 }

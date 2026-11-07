@@ -1,13 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import http from "node:http";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { readConfiguration } from "../src/configuration.mjs";
-import { createGateway } from "../src/gateway.mjs";
+import { hookedServer } from "./http-fixture.mjs";
 import { searchFixture } from "./fixture.mjs";
 
 test(
@@ -17,7 +16,13 @@ test(
     const fixture = await searchFixture(t),
       requests = [];
     const query = "LM Studio MCP documentation";
-    const upstream = http.createServer(async (req, res) => {
+    const handler = async (req, res) => {
+      if (req.method === "GET") {
+        res
+          .writeHead(200, { "content-type": "application/json" })
+          .end('{"data":[]}');
+        return;
+      }
       let bytes = "";
       for await (const chunk of req) bytes += chunk;
       const body = JSON.parse(bytes);
@@ -105,29 +110,16 @@ test(
       });
       send({ type: "message_stop" });
       res.end();
-    });
-    await new Promise((r) => upstream.listen(0, "127.0.0.1", r));
+    };
     const search =
       process.env.NATIVE_SEARCH_LIVE === "1"
         ? readConfiguration()
         : fixture.configuration;
-    const gateway = createGateway({
-      apiKey: "native-gateway",
-      upstreamKey: "fixture",
-      upstreamUrl: `http://127.0.0.1:${upstream.address().port}`,
-      search,
-    });
-    await new Promise((r) => gateway.listen(0, "127.0.0.1", r));
-    t.after(async () => {
-      for (const server of [gateway, upstream]) {
-        server.closeAllConnections();
-        await new Promise((r) => server.close(r));
-      }
-    });
+    const { url } = await hookedServer(t, fixture.directory, handler, search);
     const env = {
       ...process.env,
       CLAUDE_CONFIG_DIR: join(fixture.directory, "native"),
-      ANTHROPIC_BASE_URL: `http://127.0.0.1:${gateway.address().port}`,
+      ANTHROPIC_BASE_URL: url,
       ANTHROPIC_API_KEY: "native-gateway",
       ANTHROPIC_MODEL: "fixture-model",
       ANTHROPIC_AUTH_TOKEN: "",

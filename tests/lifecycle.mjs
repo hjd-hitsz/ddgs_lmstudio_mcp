@@ -38,9 +38,8 @@ test(
     await writeFile(
       config,
       JSON.stringify({
-        apiKey: "fixture",
-        upstreamKey: "fixture",
-        upstreamUrl: "http://127.0.0.1:1",
+        upstreamUrl: `http://127.0.0.1:${port}`,
+        leasePath: join(f.directory, "relay.sock"),
         port,
         lmStudioStateFile: state,
         lmStudioExecutable: process.execPath,
@@ -80,11 +79,11 @@ test(
     });
     const ready = async () => {
       try {
-        return (
-          await fetch(`http://127.0.0.1:${port}/healthz`, {
-            signal: AbortSignal.timeout(300),
-          })
-        ).ok;
+        const response = await fetch(
+          `http://127.0.0.1:${port}/.well-known/ddgs-lmstudio`,
+          { signal: AbortSignal.timeout(300) },
+        );
+        return response.ok && (await response.json()).attached === true;
       } catch {
         return false;
       }
@@ -97,7 +96,7 @@ test(
         [
           "--input-type=module",
           "-e",
-          `import fs from 'node:fs';fs.writeFileSync(process.argv[1],JSON.stringify({pid:process.pid}));setInterval(()=>{},1000);`,
+          `import fs from 'node:fs';import http from 'node:http';http.createServer((req,res)=>res.end('{}')).listen(${port},'127.0.0.1',()=>fs.writeFileSync(process.argv[1],JSON.stringify({pid:process.pid})));`,
           state,
         ],
         { stdio: "ignore" },

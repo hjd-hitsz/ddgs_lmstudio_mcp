@@ -1,8 +1,12 @@
-import { readFile, readlink, realpath } from "node:fs/promises";
+import { readFile, readlink, realpath, mkdir } from "node:fs/promises";
 import { watch } from "node:fs";
-import { dirname, basename } from "node:path";
+import { dirname, basename, join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { readGatewayConfiguration } from "./gateway-configuration.mjs";
+import { configurationDirectory } from "./configuration.mjs";
 import { createGateway } from "./gateway.mjs";
+import { createRelayLease } from "./relay-lease.mjs";
+import { attachHook } from "./attach.mjs";
 
 const config = await readGatewayConfiguration();
 const executable = await realpath(config.lmStudioExecutable);
@@ -25,36 +29,68 @@ async function owner() {
     throw error;
   }
 }
-
 let identity = await owner();
-if (!identity) {
-  console.error("LM Studio 未运行，搜索网关保持关闭。");
-} else {
-  const server = createGateway(config);
-  let closing = false;
-  let checking = false;
+if (!identity) console.error("LM Studio 未运行，搜索服务保持关闭。");
+else {
+  await mkdir(configurationDirectory, { recursive: true, mode: 0o700 });
+  const leasePath =
+      config.leasePath || join(configurationDirectory, "relay.sock"),
+    token = randomUUID();
+  const lease = await createRelayLease(leasePath, token, () => {
+    attached = false;
+  });
+  const server = createGateway({ ...config, relayToken: token });
+  let closing = false,
+    checking = false,
+    attaching = false,
+    attached = false;
   const close = () => {
     if (closing) return;
     closing = true;
     clearInterval(timer);
     watcher.close();
+    void lease.close();
     server.close();
     server.closeAllConnections();
-    console.error("LM Studio 已退出，搜索网关已停止。");
   };
+  async function attach() {
+    if (attaching || closing || attached) return;
+    attaching = true;
+    try {
+      const apiPort = Number(new URL(config.upstreamUrl).port);
+      await attachHook(identity.pid, {
+        apiPort,
+        relayPort: server.address().port,
+        leasePath,
+        token,
+      });
+      attached = true;
+      console.error(
+        `搜索服务已挂接 LM Studio ${identity.pid}，原入口端口 ${apiPort}。`,
+      );
+    } catch (error) {
+      console.error(error.message);
+    } finally {
+      attaching = false;
+    }
+  }
   async function check() {
     if (checking || closing) return;
     checking = true;
     try {
       const current = await owner();
-      if (!current) close();
-      else if (
-        identity.pid !== current.pid ||
-        identity.start !== current.start
+      if (
+        !current ||
+        current.pid !== identity.pid ||
+        current.start !== identity.start
       ) {
-        identity = current;
-        console.error(`搜索网关已跟随 LM Studio 进程 ${identity.pid}。`);
-      }
+        if (!current) close();
+        else {
+          identity = current;
+          attached = false;
+          if (server.listening) await attach();
+        }
+      } else if (server.listening) await attach();
     } catch (error) {
       console.error(error.message);
       close();
@@ -66,11 +102,7 @@ if (!identity) {
   const watcher = watch(dirname(config.lmStudioStateFile), (_, file) => {
     if (file?.toString() === basename(config.lmStudioStateFile)) void check();
   });
-  const timer = setInterval(check, 250);
-  server.listen(config.port, "127.0.0.1", () =>
-    console.error(
-      `搜索网关已监听 127.0.0.1:${config.port}，跟随 LM Studio 进程 ${identity.pid}。`,
-    ),
-  );
+  const timer = setInterval(check, 1000);
+  server.listen(0, "127.0.0.1", () => void attach());
   for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, close);
 }
